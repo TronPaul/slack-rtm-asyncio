@@ -1,7 +1,10 @@
 import asyncio
+import datetime
 import json
 import logging
+import re
 import signal
+import time
 import websockets
 import yaml
 from websockets.client import WebSocketClientProtocol
@@ -19,7 +22,7 @@ class SlackWebsocketProtocol(WebSocketClientProtocol):
 async def connect(access_token):
     slack = Slacker(access_token)
     resp = await slack.rtm.start()
-    return await websockets.connect(resp.body['url'], klass=SlackWebsocketProtocol).client
+    return await websockets.connect(resp.body['url'], klass=SlackWebsocketProtocol).client, resp.body
 
 
 class Bot(object):
@@ -29,6 +32,7 @@ class Bot(object):
         self.access_token = access_token
         self.loop = asyncio.get_event_loop()
         self.handlers = {}
+        self.message_counter = 0
 
     def create_connection(self):
         t = asyncio.Task(connect(self.access_token), loop=self.loop)
@@ -50,17 +54,19 @@ class Bot(object):
             msg = await self.websocket.recv()
             type_ = msg.get('type', None)
             if type_:
-                handlers = handlers.get(type_, None)
-                for h in handlers:
-                    if asyncio.iscoroutinefunction(h):
-                        await h(self, msg)
-                    else:
-                        h(self, msg)
+                handlers = self.handlers.get(type_, None)
+                if handlers:
+                    for h in handlers:
+                        if asyncio.iscoroutinefunction(h):
+                            await h(self, msg)
+                        else:
+                            h(self, msg)
 
     def connection_made(self, f):
         if getattr(self, 'websocket', None):
             self.websocket.close()
-        websocket = f.result()
+        websocket, start_resp = f.result()
+        self.name = start_resp['self']['name']
         self.websocket = websocket
         self.log.info('Connected')
         self.add_listener()
@@ -70,16 +76,28 @@ class Bot(object):
         self.add_signal_handlers()
         loop.run_forever()
 
-    def send(self, data):
-        self.websocket.send(json.dumps(data))
+    async def send(self, data):
+        self.message_counter += 1
+        data['id'] = self.message_counter
+        await self.websocket.send(data)
 
     def add_handler(self, type_, func):
         handlers = self.handlers.setdefault(type_, [])
         handlers.append(func)
 
 
+ACEN_REGEX = re.compile(r"(When'?s )?acen\??", re.IGNORECASE)
+ACEN_DATE = datetime.date(2016, 5, 20)
+
+
+async def acen_countdown(bot, message):
+    if ACEN_REGEX.match(message['text']):
+        delta = ACEN_DATE - datetime.date.today()
+        await bot.send(dict(type='message', text='Acen is in {} days'.format(delta.days), channel=message['channel']))
+
 if __name__ == '__main__':
     with open('config.yml') as fp:
         access_token = yaml.load(fp)['access_token']
     bot = Bot(access_token)
+    bot.add_handler('message', acen_countdown)
     bot.run()
