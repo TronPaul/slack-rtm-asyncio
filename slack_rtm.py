@@ -86,15 +86,6 @@ class Bot(object):
         handlers.append(func)
 
 
-ACEN_REGEX = re.compile(r"(When'?s )?acen\??", re.IGNORECASE)
-ACEN_DATE = datetime.date(2016, 5, 20)
-
-
-async def acen_countdown(bot, message):
-    if ACEN_REGEX.match(message['text']):
-        delta = ACEN_DATE - datetime.date.today()
-        await bot.send(dict(type='message', text='Acen is in {} days'.format(delta.days), channel=message['channel']))
-
 if __name__ == '__main__':
     with open('config.yml') as fp:
         access_token = yaml.load(fp)['access_token']
