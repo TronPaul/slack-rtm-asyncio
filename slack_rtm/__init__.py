@@ -75,7 +75,10 @@ class Registry(object):
         self.includes = set()
 
     def get_event_matches(self, data):
-        return self.events.get(data['type'], [])
+        if 'type' in data:
+            return self.events.get(data['type'], [])
+        else:
+            return []
 
 
 class Bot(object):
@@ -133,7 +136,10 @@ class Bot(object):
         while True:
             msg = await self.websocket.recv()
             for e in self.registry.get_event_matches(msg):
-                e.callback(self, msg)
+                if e.iscoroutine is True:
+                    self.loop.create_task(e.callback(self, msg))
+                else:
+                    e.callback(self, msg)
 
     def connection_made(self, f):
         if getattr(self, 'websocket', None):

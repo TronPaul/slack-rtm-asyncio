@@ -18,6 +18,8 @@ class event(object):
         self.message_type = message_type
         self.callback = callback
         self.venusian_category = venusian_category
+        if callback is not None:
+            self.iscoroutine = asyncio.iscoroutinefunction(callback)
 
     def __call__(self, func):
         def callback(context, name, ob):
