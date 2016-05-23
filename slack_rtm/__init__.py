@@ -1,16 +1,13 @@
 import asyncio
-import datetime
+import importlib
 import json
 import logging
-import importlib
-import re
 import signal
-import time
-import websockets
 import venusian
+import websockets
 import yaml
-from websockets.client import WebSocketClientProtocol
 from slacker import Slacker
+from websockets.client import WebSocketClientProtocol
 
 
 def maybedotted(name):
@@ -93,6 +90,7 @@ class Bot(object):
         self.handlers = {}
         self.message_counter = 0
         self.registry = Registry()
+        self._listener_task = None
         if includes:
             self.include(*includes)
 
@@ -102,11 +100,15 @@ class Bot(object):
         return self.loop
 
     def add_signal_handlers(self):
-        self.loop.add_signal_handler(signal.SIGINT, self.SIGINT)
+        self.loop.add_signal_handler(signal.SIGINT, self.stop)
 
-    def SIGINT(self):
-        asyncio.ensure_future(self.websocket.close(), loop=self.loop)
-        self.loop.stop()
+    def stop(self):
+        close = asyncio.ensure_future(self.websocket.close(), loop=self.loop)
+
+        def stop(*args):
+            self.loop.stop()
+
+        close.add_done_callback(stop)
 
     def include(self, *modules, **kwargs):
         reg = self.registry
@@ -130,16 +132,19 @@ class Bot(object):
             cur_events.append(e)
 
     def add_listener(self):
-        self.loop.create_task(self.listener())
+        self._listener_task = self.loop.create_task(self.listener())
 
     async def listener(self):
-        while True:
-            msg = await self.websocket.recv()
-            for e in self.registry.get_event_matches(msg):
-                if e.iscoroutine is True:
-                    self.loop.create_task(e.callback(self, msg))
-                else:
-                    e.callback(self, msg)
+        try:
+            while True:
+                msg = await self.websocket.recv()
+                for e in self.registry.get_event_matches(msg):
+                    if e.iscoroutine is True:
+                        self.loop.create_task(e.callback(self, msg))
+                    else:
+                        e.callback(self, msg)
+        except websockets.ConnectionClosed:
+            pass
 
     def connection_made(self, f):
         if getattr(self, 'websocket', None):
@@ -155,10 +160,10 @@ class Bot(object):
         self.add_signal_handlers()
         loop.run_forever()
 
-    async def send(self, data):
+    def send(self, data):
         self.message_counter += 1
         data['id'] = self.message_counter
-        await self.websocket.send(data)
+        return self.websocket.send(data)
 
     def add_handler(self, type_, func):
         handlers = self.handlers.setdefault(type_, [])
